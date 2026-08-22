@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Waypost Revenue &amp; Margin Forecast</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    color-scheme: light;
+    --charcoal:#333f48; --ink:#2a333a; --red:#9b2743; --smoke:#E3E5E6; --bone:#f2f5f5; --paper:#fff;
+    --muted:#6b757c;
+    --s-proj:#333f48; --s-contract:#378ADD; --s-proposal:#EF9F27; --s-scoping:#7C5CCB; --s-disc:#97a0a7;
+    --cost:#9b2743; --good:#5a8a2e; --bad:#E24B4A;
+    --serif:Georgia,"Times New Roman",serif;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bone);color:var(--charcoal);font-family:var(--sans);font-size:14px;line-height:1.45}
+  h1,h2,h3{font-family:var(--serif);margin:0}
+  .wrap{max-width:1340px;margin:0 auto;padding:18px 24px 64px}
+  header.top{display:flex;align-items:center;gap:14px;padding:4px 0 14px;border-bottom:3px solid var(--charcoal);flex-wrap:wrap}
+  .logo{display:flex;align-items:center;gap:10px}
+  .hex{width:32px;height:36px;display:block}
+  .brandname{font-family:var(--serif);font-weight:700;letter-spacing:.14em;font-size:18px}
+  .brandtag{font-size:8.5px;letter-spacing:.22em;color:var(--red);font-weight:800}
+  header.top h1{font-size:19px;margin-left:auto;font-weight:700}
+  .asof{font-size:11px;color:var(--muted);margin-left:10px;text-align:right}
+  .asof .sync-ok{color:#5a8a2e;font-weight:700}
+  .asof .sync-warn{color:var(--bad);font-weight:700}
+  #whoami{font-size:11px;color:var(--muted);margin-left:12px}
+  #whoami a{color:var(--red);text-decoration:none;font-weight:700;cursor:pointer}
+
+  .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:18px 0 4px}
+  .seg{display:inline-flex;border:1px solid var(--smoke);border-radius:9px;overflow:hidden;background:#fff;box-shadow:0 1px 2px rgba(51,63,72,.05)}
+  .seg button{border:0;background:#fff;padding:8px 15px;font-family:inherit;font-size:13px;font-weight:600;color:var(--charcoal);cursor:pointer}
+  .seg button.active{background:var(--charcoal);color:#fff}
+  .seg.views button.active{background:var(--red)}
+  select,.btn{font-family:inherit;font-size:13px;font-weight:600;padding:8px 12px;border:1px solid var(--smoke);border-radius:9px;background:#fff;color:var(--charcoal);cursor:pointer}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .flabel{font-size:12px;font-weight:700;color:var(--muted)}
+  .hint{font-size:12px;color:var(--muted);font-style:italic}
+
+  .ms{position:relative}
+  .mspanel{display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:40;background:#fff;border:1px solid var(--smoke);border-radius:10px;box-shadow:0 6px 20px rgba(51,63,72,.16);padding:8px;max-height:320px;overflow:auto;min-width:270px}
+  .ms.open .mspanel{display:block}
+  .mspanel label{display:flex;gap:8px;align-items:center;padding:5px 7px;border-radius:6px;font-size:13px;cursor:pointer;white-space:nowrap}
+  .mspanel label:hover{background:var(--bone)}
+  .mspanel .div{height:1px;background:var(--smoke);margin:6px 2px}
+
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:14px}
+  .kpi{background:#fff;border:1px solid var(--smoke);border-radius:12px;padding:16px 18px;box-shadow:0 1px 3px rgba(51,63,72,.06)}
+  .kpi .k{font-size:10.5px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+  .kpi .v{font-family:var(--serif);font-size:29px;font-weight:700;margin-top:6px;line-height:1.1}
+  .kpi .v.na{color:var(--muted);font-size:22px}
+  .kpi .s{font-size:11.5px;color:var(--muted);margin-top:3px;min-height:16px}
+
+  .panelcard{background:#fff;border:1px solid var(--smoke);border-radius:12px;margin-top:14px;box-shadow:0 1px 3px rgba(51,63,72,.06);overflow:hidden}
+  .ph{display:flex;align-items:center;gap:10px;padding:13px 18px;border-bottom:1px solid var(--bone)}
+  .ph h2{font-size:16px;font-weight:700}
+  .ph .sub{font-size:12px;color:var(--muted);margin-left:auto;text-align:right}
+  .chartbox{padding:14px 18px 18px;height:320px}
+
+  table.dt{width:100%;border-collapse:collapse}
+  table.dt th{font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);text-align:left;padding:9px 14px;border-bottom:1px solid var(--smoke);white-space:nowrap;background:#fff;position:sticky;top:0;z-index:2}
+  table.dt th.sortable{cursor:pointer;user-select:none}
+  table.dt th.sortable:hover{color:var(--charcoal)}
+  table.dt th .arw{color:var(--red)}
+  table.dt td{padding:9px 14px;border-bottom:1px solid var(--bone);vertical-align:top}
+  table.dt tbody tr:last-child td{border-bottom:0}
+  table.dt tbody tr:hover{background:var(--bone)}
+  .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .strong{font-weight:700}
+  .dim{color:var(--muted)}
+  .tscroll{max-height:600px;overflow:auto}
+  .empty{padding:34px;text-align:center;color:var(--muted);font-size:13.5px}
+  .loading{padding:60px;text-align:center;color:var(--muted);font-size:15px}
+  .errbox{padding:34px;text-align:center;color:var(--bad);font-size:13.5px;font-weight:600}
+  .foot{margin-top:30px;font-size:11px;color:#97a0a7;text-align:center;border-top:1px solid var(--smoke);padding-top:14px}
+
+  .banner{background:#FCEBEB;border:1px solid var(--bad);border-radius:10px;padding:11px 15px;margin-top:14px;font-size:12.5px;color:#7a2320}
+  .banner b{font-weight:800}
+  .banner a{color:#7a2320;font-weight:800;cursor:pointer;text-decoration:underline}
+
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:800;letter-spacing:.03em;white-space:nowrap;color:#fff}
+  .pill.proj{background:var(--s-proj)}
+  .pill.contract{background:var(--s-contract)}
+  .pill.proposal{background:var(--s-proposal)}
+  .pill.scoping{background:var(--s-scoping)}
+  .pill.disc{background:var(--s-disc)}
+  .pill.won{background:var(--good)}
+  .tagblock{display:inline-block;padding:2px 7px;border-radius:5px;font-size:10.5px;font-weight:800;background:#FCEBEB;color:#7a2320;border:1px solid #f0c9c9}
+  .taginfo{display:inline-block;padding:2px 7px;border-radius:5px;font-size:10.5px;font-weight:800;background:#f4f1e8;color:#7a6a3a;border:1px solid #e5ddc6}
+
+  .legend{display:flex;flex-wrap:wrap;gap:14px;padding:0 18px 14px;font-size:12px;color:var(--muted)}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .legend i{width:11px;height:11px;border-radius:3px;display:inline-block}
+
+  .toast{position:fixed;bottom:18px;right:18px;max-width:380px;background:var(--charcoal);color:#fff;padding:11px 17px;border-radius:9px;font-size:13px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .3s;z-index:120}
+  .toast.show{opacity:1}
+  .toast.bad{background:var(--bad)}
+
+  .authgate{position:fixed;inset:0;background:var(--bone);display:flex;align-items:center;justify-content:center;z-index:100}
+  .authcard{background:#fff;border:1px solid var(--smoke);border-radius:14px;box-shadow:0 4px 18px rgba(51,63,72,.1);padding:34px 38px;max-width:380px;text-align:center}
+  .authcard .hex{width:40px;height:44px;margin:0 auto 14px}
+  .authcard h2{font-size:19px;margin-bottom:6px}
+  .authcard p{color:var(--muted);font-size:13px;margin:0 0 20px}
+  .authbtn{display:inline-flex;align-items:center;gap:9px;background:var(--charcoal);color:#fff;border:0;border-radius:9px;padding:11px 20px;font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer}
+  .authbtn:hover{background:#242c32}
+  .authbtn:disabled{opacity:.5;cursor:not-allowed}
+  .authmsg{margin-top:16px;font-size:12.5px;color:var(--muted)}
+  .authmsg.denied{color:var(--bad);font-weight:600}
+</style>
+</head>
+<body>
+<div class="authgate" id="authgate">
+  <div class="authcard">
+    <svg class="hex" viewBox="0 0 818.5 893.6"><g><polygon fill="#9b2743" points="409.6 0 199.5 119.9 200.1 485.6 409.6 342.7 409.6 0"/><polygon fill="#9b2743" points="409.6 722.4 223 844.8 308 893.6 409.6 829.6 409.6 722.4"/><polygon fill="#9b2743" points="409.6 462.6 98 677.8 97.2 178.5 0 233.9 0 716.5 133.7 793.7 409.6 604.8 409.6 462.6"/></g><g><polygon fill="#5a0716" points="408.8 0 619 119.9 618.4 485.6 408.8 342.7 408.8 0"/><polygon fill="#5a0716" points="408.8 722.4 595.4 844.8 510.5 893.6 408.8 829.6 408.8 722.4"/><polygon fill="#5a0716" points="408.8 462.6 720.5 677.8 721.3 178.5 818.5 233.9 818.5 716.5 684.8 793.7 408.8 604.8 408.8 462.6"/></g></svg>
+    <h2>Revenue &amp; Margin Forecast</h2>
+    <p>Sign in with your Waypost Microsoft account to view the forecast.</p>
+    <button class="authbtn" id="msSignIn">&#9205; Sign in with Microsoft</button>
+    <div class="authmsg" id="authmsg"></div>
+  </div>
+</div>
+
+<div class="wrap" id="wrap" style="display:none">
+  <header class="top">
+    <div class="logo">
+      <svg class="hex" viewBox="0 0 818.5 893.6"><g><polygon fill="#9b2743" points="409.6 0 199.5 119.9 200.1 485.6 409.6 342.7 409.6 0"/><polygon fill="#9b2743" points="409.6 722.4 223 844.8 308 893.6 409.6 829.6 409.6 722.4"/><polygon fill="#9b2743" points="409.6 462.6 98 677.8 97.2 178.5 0 233.9 0 716.5 133.7 793.7 409.6 604.8 409.6 462.6"/></g><g><polygon fill="#5a0716" points="408.8 0 619 119.9 618.4 485.6 408.8 342.7 408.8 0"/><polygon fill="#5a0716" points="408.8 722.4 595.4 844.8 510.5 893.6 408.8 829.6 408.8 722.4"/><polygon fill="#5a0716" points="408.8 462.6 720.5 677.8 721.3 178.5 818.5 233.9 818.5 716.5 684.8 793.7 408.8 604.8 408.8 462.6"/></g></svg>
+      <div><div class="brandname">WAYPOST</div><div class="brandtag">SUPPLY CHAIN SPECIALISTS</div></div>
+    </div>
+    <h1>Revenue &amp; Margin Forecast</h1>
+    <span class="asof" id="asof"></span>
+    <button class="btn" id="syncBtn" title="Pull fresh projects and deals from HubSpot now, then reload.">&#8635; Sync now</button>
+    <button class="btn" id="refreshBtn" title="Re-read what is already in Supabase, without pulling from HubSpot">&#10227; Refresh</button>
+    <span id="whoami"></span>
+  </header>
+
+  <div class="controls">
+    <div class="seg views" id="segView">
+      <button data-v="forecast" class="active">Forecast</button>
+      <button data-v="detail">By project &amp; deal</button>
+      <button data-v="gaps">Data gaps</button>
+    </div>
+  </div>
+
+  <div id="view"><div class="loading">Loading&hellip;</div></div>
+
+  <div class="foot">
+    Revenue and cost are spread across months by calendar day, so the months always add back to the
+    contract total. Projects are work already won; deal stages are open pipeline shown at full value,
+    not probability-weighted. Source: HubSpot Projects and Sales Pipeline deals.
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ===== Supabase ===== */
+const SB_URL="https://enojrhmixzzzuuoagdjd.supabase.co";
+const SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVub2pyaG1peHp6enV1b2FnZGpkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgwNDMyMTUsImV4cCI6MjA4MzYxOTIxNX0.THvRnk10rmkd0RGEuvTWNIiDer9S98x7pI1zOcSxRzQ";
+const sb=supabase.createClient(SB_URL,SB_KEY);
+const APP="revenue_forecast";
+
+async function authHeader(){
+  const {data:{session}}=await sb.auth.getSession();
+  return (session&&session.access_token)||SB_KEY;
+}
+async function sbGet(path){
+  const token=await authHeader();
+  const r=await fetch(SB_URL+"/rest/v1/"+path,{headers:{apikey:SB_KEY,Authorization:"Bearer "+token}});
+  if(!r.ok)throw new Error(path+": "+r.status+" "+(await r.text()));
+  return r.json();
+}
+/* Access is a per-person allow-list (public.app_access), not a domain check. The same function
+   backs the RLS policies, so this gate and the data can never disagree. */
+async function amIAllowed(){
+  const token=await authHeader();
+  const r=await fetch(SB_URL+"/rest/v1/rpc/can_access",{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify({p_app:APP})});
+  if(!r.ok)return false;
+  return await r.json();
+}
+async function rpc(name){
+  const token=await authHeader();
+  const r=await fetch(SB_URL+"/rest/v1/rpc/"+name,{method:"POST",headers:{apikey:SB_KEY,Authorization:"Bearer "+token,"Content-Type":"application/json"}});
+  const body=await r.json().catch(()=>null);
+  if(!r.ok)throw new Error((body&&(body.message||body.hint))||("Request failed ("+r.status+")"));
+  return body;
+}
+
+/* ===== Formatting ===== */
+const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function pd(s){if(!s)return null;const p=String(s).slice(0,10).split("-").map(Number);if(p.length<3||!p[0])return null;return new Date(p[0],p[1]-1,p[2]);}
+function fmtD(s){const d=pd(s);return d?MON[d.getMonth()]+" "+d.getDate()+", "+d.getFullYear():"—";}
+function usd(n){if(n===null||n===undefined)return "—";const v=Number(n)||0;return (v<0?"-":"")+"$"+Math.round(Math.abs(v)).toLocaleString("en-US");}
+function usdK(n){const v=Number(n)||0;return "$"+Math.round(v/1000).toLocaleString("en-US")+"K";}
+function pct1(n){if(n===null||n===undefined)return "—";return (Number(n)||0).toFixed(1)+"%";}
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function sum(arr,f){return arr.reduce((a,x)=>a+(Number(f(x))||0),0);}
+function monLabel(k){const p=String(k).split("-");return MON[Number(p[1])-1]+" "+String(p[0]).slice(2);}
+function toast(msg,bad){const t=document.getElementById("toast");t.textContent=msg;t.className="toast show"+(bad?" bad":"");setTimeout(()=>{t.className="toast"+(bad?" bad":"");},4200);}
+
+/* ===== Series, stacked most-certain first ===== */
+const SERIES=[
+  {key:"Active projects", cls:"proj",     color:"#333f48"},
+  {key:"Contract Review", cls:"contract", color:"#378ADD"},
+  {key:"Proposal",        cls:"proposal", color:"#EF9F27"},
+  {key:"Scoping",         cls:"scoping",  color:"#7C5CCB"},
+  {key:"Discussions",     cls:"disc",     color:"#97a0a7"}
+];
+function seriesMeta(k){return SERIES.find(s=>s.key===k)||{key:k,cls:"disc",color:"#c2c8cc"};}
+
+/* ===== State ===== */
+let DATA={monthly:[],entities:[],gaps:[],sync:null};
+let VIEW="forecast";
+let F={range:"12",series:null,clients:null,sort:{col:"revenue",dir:-1}};
+let CHARTS=[];
+function destroyCharts(){CHARTS.forEach(c=>c.destroy());CHARTS=[];}
+
+/* ===== Load ===== */
+async function loadAll(){
+  const [monthly,entities,gaps,log]=await Promise.all([
+    sbGet("fc_monthly?select=*&limit=20000"),
+    sbGet("fc_entity_totals?select=*&limit=5000"),
+    sbGet("fc_gaps?select=*&limit=5000"),
+    sbGet("fc_sync_log?select=*&order=ran_at.desc&limit=1")
+  ]);
+  DATA={monthly,entities,gaps,sync:log.length?log[0]:null};
+}
+
+/* ===== Month range ===== */
+const RANGES=[["6","Next 6 months"],["12","Next 12 months"],["18","Next 18 months"],["cy","This calendar year"],["all","All"]];
+function monthKeys(){
+  if(F.range==="all")return [...new Set(DATA.monthly.map(r=>r.month_key))].sort();
+  const n=new Date(), y=n.getFullYear(), m=n.getMonth();
+  const key=(yy,mm)=>yy+"-"+String(mm+1).padStart(2,"0");
+  if(F.range==="cy"){const out=[];for(let i=0;i<12;i++)out.push(key(y,i));return out;}
+  const cnt=Number(F.range),out=[];
+  for(let i=0;i<cnt;i++){const d=new Date(y,m+i,1);out.push(key(d.getFullYear(),d.getMonth()));}
+  return out;
+}
+
+/* ===== Filtering ===== */
+function activeRows(){
+  const keys=new Set(monthKeys());
+  return DATA.monthly.filter(r=>
+    keys.has(r.month_key) &&
+    (!F.series  || F.series.has(r.series_label)) &&
+    (!F.clients || F.clients.has(r.client||"—"))
+  );
+}
+
+/* ===== Shell ===== */
+function render(){
+  document.getElementById("asof").innerHTML=asOfHtml();
+  if(VIEW==="forecast")renderForecast();
+  else if(VIEW==="detail")renderDetail();
+  else renderGaps();
+}
+function asOfHtml(){
+  if(!DATA.sync)return '<span class="sync-warn">Never synced</span>';
+  const d=new Date(DATA.sync.ran_at);
+  const stale=(Date.now()-d.getTime())>1000*60*60*36;
+  const failed=DATA.sync.status==="failed";
+  const cls=(failed||stale)?"sync-warn":"sync-ok";
+  const label=failed?"last sync FAILED":(stale?"stale":"ok");
+  return "HubSpot data as of<br>"+d.toLocaleString()+' &middot; <span class="'+cls+'">'+label+"</span>";
+}
+function kpi(k,v,s,na){return '<div class="kpi"><div class="k">'+esc(k)+'</div><div class="v'+(na?" na":"")+'">'+esc(v)+'</div><div class="s">'+esc(s)+"</div></div>";}
+
+function bannerHtml(){
+  const blocking=DATA.gaps.filter(g=>g.severity==="blocking").length;
+  if(!blocking)return "";
+  const noCost=DATA.gaps.filter(g=>g.issue==="No cost data").length;
+  const wonNoProj=DATA.gaps.filter(g=>g.issue==="Won deal with no project record").length;
+  const bits=[];
+  if(noCost)bits.push("<b>"+noCost+"</b> record"+(noCost===1?"":"s")+" with no cost data, so margin is blank for "+(noCost===1?"it":"them"));
+  if(wonNoProj)bits.push("<b>"+wonNoProj+"</b> won deal"+(wonNoProj===1?"":"s")+" with no Project record, so that revenue is missing entirely");
+  return '<div class="banner"><b>'+blocking+" data gap"+(blocking===1?"":"s")+" in HubSpot.</b> "+
+    (bits.length?bits.join("; ")+". ":"")+
+    '<a id="gapLink">See all gaps &rarr;</a></div>';
+}
+function wireBanner(){
+  const a=document.getElementById("gapLink");
+  if(a)a.addEventListener("click",()=>{
+    VIEW="gaps";
+    [...document.querySelectorAll("#segView button")].forEach(b=>b.classList.toggle("active",b.dataset.v==="gaps"));
+    render();
+  });
+}
+
+/* ===== Shared filter bar ===== */
+function filterBar(){
+  const allClients=[...new Set(DATA.monthly.map(r=>r.client||"—"))].sort();
+  const allSeries=SERIES.map(s=>s.key).filter(k=>DATA.monthly.some(r=>r.series_label===k));
+  const cLabel=!F.clients?"All clients":(F.clients.size===1?[...F.clients][0]:F.clients.size+" clients");
+  const sLabel=!F.series?"Projects + all stages":(F.series.size===1?[...F.series][0]:F.series.size+" selected");
+  return '<div class="controls">'+
+    '<div class="seg" id="segRange">'+RANGES.map(r=>'<button data-r="'+r[0]+'"'+(F.range===r[0]?' class="active"':"")+">"+esc(r[1])+"</button>").join("")+"</div>"+
+    '<span class="flabel">Show:</span>'+
+    '<div class="ms" id="msSeries"><button class="btn" id="msSeriesBtn">'+esc(sLabel)+" &#9662;</button>"+
+      '<div class="mspanel"><label><input type="checkbox" id="sAll"'+(!F.series?" checked":"")+'> <b>Projects + all stages</b></label><div class="div"></div>'+
+      allSeries.map(k=>'<label><input type="checkbox" class="sOne" value="'+esc(k)+'"'+(F.series&&F.series.has(k)?" checked":"")+"> "+esc(k)+"</label>").join("")+
+    "</div></div>"+
+    '<span class="flabel">Client:</span>'+
+    '<div class="ms" id="msClient"><button class="btn" id="msClientBtn">'+esc(cLabel)+" &#9662;</button>"+
+      '<div class="mspanel"><label><input type="checkbox" id="cAll"'+(!F.clients?" checked":"")+'> <b>All clients</b></label><div class="div"></div>'+
+      allClients.map(c=>'<label><input type="checkbox" class="cOne" value="'+esc(c)+'"'+(F.clients&&F.clients.has(c)?" checked":"")+"> "+esc(c)+"</label>").join("")+
+    "</div></div>"+
+    "</div>";
+}
+function wireFilterBar(){
+  const sr=document.getElementById("segRange");
+  if(sr)sr.addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;F.range=b.dataset.r;render();});
+  ["msSeries","msClient"].forEach(id=>{
+    const ms=document.getElementById(id);if(!ms)return;
+    document.getElementById(id+"Btn").addEventListener("click",e=>{e.stopPropagation();ms.classList.toggle("open");});
+    ms.addEventListener("click",e=>e.stopPropagation());
+  });
+  const sAll=document.getElementById("sAll");
+  if(sAll)sAll.addEventListener("change",()=>{F.series=null;render();});
+  [...document.querySelectorAll(".sOne")].forEach(cb=>cb.addEventListener("change",()=>{
+    const p=[...document.querySelectorAll(".sOne")].filter(x=>x.checked).map(x=>x.value);
+    F.series=p.length?new Set(p):null;render();
+  }));
+  const cAll=document.getElementById("cAll");
+  if(cAll)cAll.addEventListener("change",()=>{F.clients=null;render();});
+  [...document.querySelectorAll(".cOne")].forEach(cb=>cb.addEventListener("change",()=>{
+    const p=[...document.querySelectorAll(".cOne")].filter(x=>x.checked).map(x=>x.value);
+    F.clients=p.length?new Set(p):null;render();
+  }));
+}
+
+/* ===== View 1: Forecast ===== */
+function renderForecast(){
+  const rows=activeRows(), keys=monthKeys();
+  const rev=sum(rows,r=>r.revenue);
+  /* Cost and margin only mean anything for records that actually have cost data. Revenue with no
+     cost basis is reported separately rather than silently treated as 100% margin. */
+  const costed=rows.filter(r=>r.cost_basis!=="none");
+  const uncosted=rows.filter(r=>r.cost_basis==="none");
+  const cRev=sum(costed,r=>r.revenue), cCost=sum(costed,r=>r.cost);
+  const coverage=rev?cRev/rev*100:0;
+  const nCosted=new Set(costed.map(r=>r.entity_id)).size;
+  const nTotal=new Set(rows.map(r=>r.entity_id)).size;
+
+  const shown=SERIES.filter(s=>rows.some(r=>r.series_label===s.key));
+
+  const byMon=new Map();
+  keys.forEach(k=>byMon.set(k,{rev:0,cost:0,cRev:0}));
+  rows.forEach(r=>{
+    const o=byMon.get(r.month_key);if(!o)return;
+    o.rev+=Number(r.revenue)||0;
+    if(r.cost_basis!=="none"){o.cost+=Number(r.cost)||0;o.cRev+=Number(r.revenue)||0;}
+  });
+
+  const stacks=shown.map(s=>({
+    label:s.key,backgroundColor:s.color,borderRadius:3,maxBarThickness:52,stack:"rev",
+    data:keys.map(k=>sum(rows.filter(r=>r.month_key===k&&r.series_label===s.key),r=>r.revenue))
+  }));
+
+  document.getElementById("view").innerHTML=
+    filterBar()+
+    bannerHtml()+
+    '<div class="kpis">'+
+      kpi("Forecast revenue",usd(rev),keys.length+" month"+(keys.length===1?"":"s")+" · "+nTotal+" record"+(nTotal===1?"":"s"))+
+      kpi("Forecast cost",cCost?usd(cCost):"no data",cCost?("from "+nCosted+" of "+nTotal+" records"):"no cost data in HubSpot yet",!cCost)+
+      kpi("Forecast margin",cCost?usd(cRev-cCost):"no data",cCost?("on "+usd(cRev)+" of costed revenue"):"needs advisor rates in HubSpot",!cCost)+
+      kpi("Margin %",cCost&&cRev?pct1((cRev-cCost)/cRev*100):"no data",cCost?"costed records only":"—",!cCost)+
+      kpi("Cost coverage",pct1(coverage),usd(sum(uncosted,r=>r.revenue))+" of revenue has no cost data")+
+    "</div>"+
+    '<div class="panelcard"><div class="ph"><h2>Revenue by month</h2>'+
+      '<span class="sub">Projects are won work. Deal stages are open pipeline at full value.</span></div>'+
+      (keys.length?'<div class="chartbox"><canvas id="cRev"></canvas></div>'+
+        '<div class="legend">'+shown.map(s=>'<span><i style="background:'+s.color+'"></i>'+esc(s.key)+"</span>").join("")+"</div>"
+       :'<div class="empty">No months in range.</div>')+
+    "</div>"+
+    '<div class="panelcard"><div class="ph"><h2>Margin by month</h2>'+
+      '<span class="sub">Costed records only, so these bars are a subset of the chart above</span></div>'+
+      (cCost?'<div class="chartbox"><canvas id="cMar"></canvas></div>'+
+        '<div class="legend"><span><i style="background:#333f48"></i>Revenue (costed records)</span>'+
+        '<span><i style="background:#9b2743"></i>Cost</span>'+
+        '<span><i style="background:#5a8a2e"></i>Margin %</span></div>'
+       :'<div class="empty">No cost data in HubSpot yet, so margin cannot be charted.<br>'+
+        'Fill in advisor cost type and rate on Projects and Deals, or a project cost total, and this fills in by itself.</div>')+
+    "</div>"+
+    '<div class="panelcard"><div class="ph"><h2>Monthly detail</h2></div>'+
+      '<div class="tscroll"><table class="dt"><thead><tr><th>Month</th>'+
+      shown.map(s=>'<th class="num">'+esc(s.key)+"</th>").join("")+
+      '<th class="num">Total revenue</th><th class="num">Cost</th><th class="num">Margin</th><th class="num">Margin %</th></tr></thead><tbody>'+
+      keys.map(k=>{
+        const o=byMon.get(k);
+        return '<tr><td class="strong">'+esc(monLabel(k))+"</td>"+
+          shown.map(s=>{
+            const v=sum(rows.filter(r=>r.month_key===k&&r.series_label===s.key),r=>r.revenue);
+            return '<td class="num'+(v?"":" dim")+'">'+(v?usd(v):"—")+"</td>";
+          }).join("")+
+          '<td class="num strong">'+usd(o.rev)+"</td>"+
+          '<td class="num">'+(o.cost?usd(o.cost):"—")+"</td>"+
+          '<td class="num strong">'+(o.cost?usd(o.cRev-o.cost):"—")+"</td>"+
+          '<td class="num">'+(o.cost&&o.cRev?pct1((o.cRev-o.cost)/o.cRev*100):"—")+"</td></tr>";
+      }).join("")+
+      "</tbody></table></div></div>";
+
+  wireFilterBar();wireBanner();
+  destroyCharts();
+
+  if(keys.length){
+    CHARTS.push(new Chart(document.getElementById("cRev"),{
+      type:"bar",
+      data:{labels:keys.map(monLabel),datasets:stacks},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+": "+usd(c.parsed.y)}}},
+        scales:{x:{stacked:true,grid:{display:false}},
+                y:{stacked:true,beginAtZero:true,ticks:{callback:v=>usdK(v)},grid:{color:"#f0eee7",borderDash:[3,3]}}}}
+    }));
+  }
+  if(cCost){
+    CHARTS.push(new Chart(document.getElementById("cMar"),{
+      type:"bar",
+      data:{labels:keys.map(monLabel),datasets:[
+        {label:"Revenue",data:keys.map(k=>byMon.get(k).cRev),backgroundColor:"#333f48",borderRadius:3,maxBarThickness:34,order:2},
+        {label:"Cost",data:keys.map(k=>byMon.get(k).cost),backgroundColor:"#9b2743",borderRadius:3,maxBarThickness:34,order:2},
+        {label:"Margin %",type:"line",yAxisID:"y1",order:1,
+         data:keys.map(k=>{const o=byMon.get(k);return o.cRev?(o.cRev-o.cost)/o.cRev*100:null;}),
+         borderColor:"#5a8a2e",backgroundColor:"#5a8a2e",borderWidth:2.5,tension:.28,pointRadius:3,spanGaps:true}
+      ]},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+": "+(c.dataset.yAxisID==="y1"?pct1(c.parsed.y):usd(c.parsed.y))}}},
+        scales:{x:{grid:{display:false}},
+                y:{beginAtZero:true,ticks:{callback:v=>usdK(v)},grid:{color:"#f0eee7",borderDash:[3,3]}},
+                y1:{position:"right",beginAtZero:true,suggestedMax:100,ticks:{callback:v=>v+"%"},grid:{display:false}}}}
+    }));
+  }
+}
+
+/* ===== View 2: By project and deal ===== */
+const DCOLS=[
+  {k:"series_label",l:"Type",num:false},
+  {k:"name",l:"Project / deal",num:false},
+  {k:"client",l:"Client",num:false},
+  {k:"owner",l:"Owner",num:false},
+  {k:"start_date",l:"Window",num:false},
+  {k:"revenue",l:"Revenue in range",num:true},
+  {k:"cost",l:"Cost",num:true},
+  {k:"margin",l:"Margin",num:true},
+  {k:"margin_pct",l:"Margin %",num:true},
+  {k:"basis",l:"Cost basis",num:false}
+];
+const BASIS_LABEL={advisor_rates:"Advisor rates",hs_total_cost:"Project cost total",estimated_cost:"Deal estimated cost",none:"None"};
+
+function renderDetail(){
+  const rows=activeRows();
+  const ent=new Map(DATA.entities.map(e=>[e.entity_id,e]));
+  const agg=new Map();
+  rows.forEach(r=>{
+    if(!agg.has(r.entity_id)){
+      const e=ent.get(r.entity_id)||{};
+      agg.set(r.entity_id,{
+        entity_id:r.entity_id,kind:r.kind,series_label:r.series_label,name:r.name,client:r.client,owner:r.owner,
+        start_date:e.start_date,end_date:e.end_date,dates_source:e.dates_source,
+        amount:e.amount,basis:r.cost_basis,revenue:0,cost:0,hasCost:r.cost_basis!=="none"
+      });
+    }
+    const o=agg.get(r.entity_id);
+    o.revenue+=Number(r.revenue)||0;
+    o.cost+=Number(r.cost)||0;
+  });
+  let list=[...agg.values()].map(o=>Object.assign({},o,{
+    margin:o.hasCost?o.revenue-o.cost:null,
+    margin_pct:(o.hasCost&&o.revenue)?(o.revenue-o.cost)/o.revenue*100:null,
+    cost:o.hasCost?o.cost:null
+  }));
+
+  const sc=F.sort.col,sd=F.sort.dir;
+  list.sort((a,b)=>{
+    const x=a[sc],y=b[sc];
+    if(x===null||x===undefined)return 1;
+    if(y===null||y===undefined)return -1;
+    if(typeof x==="number"&&typeof y==="number")return (x-y)*sd;
+    return String(x).localeCompare(String(y))*sd;
+  });
+
+  const totRev=sum(list,r=>r.revenue);
+  const costedList=list.filter(r=>r.hasCost);
+  const cRev=sum(costedList,r=>r.revenue),cCost=sum(costedList,r=>r.cost);
+
+  document.getElementById("view").innerHTML=
+    filterBar()+
+    bannerHtml()+
+    '<div class="kpis">'+
+      kpi("Records",String(list.length),monthKeys().length+" month window")+
+      kpi("Revenue in range",usd(totRev),"")+
+      kpi("Margin in range",cCost?usd(cRev-cCost):"no data",cCost?pct1((cRev-cCost)/cRev*100)+" on costed records":"no cost data in HubSpot yet",!cCost)+
+    "</div>"+
+    '<div class="panelcard"><div class="ph"><h2>Expected revenue and margin by project or deal</h2>'+
+      '<span class="sub">Revenue shown is the portion falling inside the selected months, not the whole contract</span></div>'+
+      (list.length?'<div class="tscroll"><table class="dt"><thead><tr>'+
+        DCOLS.map(c=>'<th class="sortable'+(c.num?" num":"")+'" data-c="'+c.k+'">'+esc(c.l)+
+          (sc===c.k?' <span class="arw">'+(sd>0?"▲":"▼")+"</span>":"")+"</th>").join("")+
+        "</tr></thead><tbody>"+
+        list.map(r=>{
+          const m=seriesMeta(r.series_label);
+          const win=(r.start_date?fmtD(r.start_date):"—")+" – "+(r.end_date?fmtD(r.end_date):"—");
+          const est=r.dates_source&&r.dates_source!=="hubspot";
+          return "<tr>"+
+            '<td><span class="pill '+m.cls+'">'+esc(r.series_label)+"</span></td>"+
+            "<td>"+esc(r.name||"—")+
+              (r.amount?'<div class="dim" style="font-size:11.5px">Contract total '+usd(r.amount)+"</div>":"")+"</td>"+
+            "<td>"+esc(r.client||"—")+"</td>"+
+            "<td>"+esc(r.owner||"—")+"</td>"+
+            "<td>"+esc(win)+(est?'<div><span class="taginfo">dates estimated</span></div>':"")+"</td>"+
+            '<td class="num strong">'+usd(r.revenue)+"</td>"+
+            '<td class="num">'+usd(r.cost)+"</td>"+
+            '<td class="num strong">'+usd(r.margin)+"</td>"+
+            '<td class="num">'+pct1(r.margin_pct)+"</td>"+
+            "<td>"+(r.basis==="none"?'<span class="tagblock">missing</span>':esc(BASIS_LABEL[r.basis]||r.basis))+"</td>"+
+          "</tr>";
+        }).join("")+
+        "</tbody></table></div>":'<div class="empty">Nothing matches these filters.</div>')+
+    "</div>";
+
+  wireFilterBar();wireBanner();
+  [...document.querySelectorAll("th.sortable")].forEach(th=>th.addEventListener("click",()=>{
+    const c=th.dataset.c, col=DCOLS.find(x=>x.k===c);
+    F.sort=(F.sort.col===c)?{col:c,dir:-F.sort.dir}:{col:c,dir:col&&col.num?-1:1};
+    render();
+  }));
+}
+
+/* ===== View 3: Data gaps ===== */
+function renderGaps(){
+  const blocking=DATA.gaps.filter(x=>x.severity==="blocking");
+  const info=DATA.gaps.filter(x=>x.severity==="info");
+  const tbl=(rows,title,note)=>
+    '<div class="panelcard"><div class="ph"><h2>'+esc(title)+'</h2><span class="sub">'+esc(note)+"</span></div>"+
+    (rows.length?'<div class="tscroll"><table class="dt"><thead><tr>'+
+      "<th>Type</th><th>Project / deal</th><th>Client</th><th>What is missing</th><th>Why it matters</th>"+
+      "</tr></thead><tbody>"+
+      rows.map(r=>{
+        let label,cls;
+        if(r.kind==="project"){label="Project";cls="proj";}
+        else if(r.kind==="won_deal"){label="Won deal";cls="won";}
+        else {label=r.stage_label||"Deal";cls=seriesMeta(r.stage_label).cls;}
+        return "<tr>"+
+          '<td><span class="pill '+cls+'">'+esc(label)+"</span></td>"+
+          "<td>"+esc(r.name||"—")+"</td>"+
+          "<td>"+esc(r.client||"—")+"</td>"+
+          '<td class="strong">'+esc(r.issue)+"</td>"+
+          '<td class="dim">'+esc(r.detail)+"</td>"+
+        "</tr>";
+      }).join("")+
+      "</tbody></table></div>":'<div class="empty">Nothing here — all clear.</div>')+
+    "</div>";
+
+  document.getElementById("view").innerHTML=
+    '<div class="kpis">'+
+      kpi("Blocking gaps",String(blocking.length),"a number is missing or wrong until fixed")+
+      kpi("Estimates in use",String(info.length),"the forecast used a coarser method than it could")+
+    "</div>"+
+    tbl(blocking,"Blocking — fix these in HubSpot","revenue or margin is absent for these records")+
+    tbl(info,"Estimated — worth tightening","the forecast still works, just less precisely");
+}
+
+/* ===== Buttons ===== */
+document.getElementById("segView").addEventListener("click",e=>{
+  const b=e.target.closest("button");if(!b)return;
+  VIEW=b.dataset.v;
+  [...document.querySelectorAll("#segView button")].forEach(x=>x.classList.toggle("active",x===b));
+  render();
+});
+document.addEventListener("click",()=>[...document.querySelectorAll(".ms.open")].forEach(m=>m.classList.remove("open")));
+
+document.getElementById("refreshBtn").addEventListener("click",async()=>{
+  const b=document.getElementById("refreshBtn");b.disabled=true;
+  try{await loadAll();render();toast("Reloaded from Supabase.");}
+  catch(e){toast(e.message,true);}
+  finally{b.disabled=false;}
+});
+document.getElementById("syncBtn").addEventListener("click",async()=>{
+  const b=document.getElementById("syncBtn");b.disabled=true;b.textContent="Syncing…";
+  try{
+    const r=await rpc("run_forecast_sync");
+    if(r&&r.status==="cooldown")toast("Already synced in the last 2 minutes — skipping.");
+    else if(r&&r.status==="failed")toast("Sync failed: "+(r.message||"unknown"),true);
+    else toast((r&&r.message)||"Sync complete.");
+    await loadAll();render();
+  }catch(e){toast(e.message,true);}
+  finally{b.disabled=false;b.innerHTML="&#8635; Sync now";}
+});
+
+/* ===== Auth ===== */
+const gate=document.getElementById("authgate"),wrapEl=document.getElementById("wrap"),
+      amsg=document.getElementById("authmsg");
+document.getElementById("msSignIn").addEventListener("click",async()=>{
+  const b=document.getElementById("msSignIn");b.disabled=true;amsg.className="authmsg";amsg.textContent="Redirecting…";
+  const {error}=await sb.auth.signInWithOAuth({provider:"azure",options:{redirectTo:location.href.split("#")[0].split("?")[0]}});
+  if(error){b.disabled=false;amsg.className="authmsg denied";amsg.textContent=error.message;}
+});
+async function boot(){
+  const {data:{session}}=await sb.auth.getSession();
+  if(!session){gate.style.display="flex";return;}
+  const ok=await amIAllowed();
+  if(!ok){
+    amsg.className="authmsg denied";
+    amsg.textContent="That account does not have access to the revenue forecast. Ask Rob to add you.";
+    gate.style.display="flex";
+    return;
+  }
+  gate.style.display="none";wrapEl.style.display="block";
+  const email=(session.user&&(session.user.email||(session.user.user_metadata||{}).email))||"";
+  document.getElementById("whoami").innerHTML=esc(email)+' &middot; <a id="signout">sign out</a>';
+  document.getElementById("signout").addEventListener("click",async()=>{await sb.auth.signOut();location.reload();});
+  try{await loadAll();render();}
+  catch(e){document.getElementById("view").innerHTML='<div class="errbox">Could not load the forecast.<br>'+esc(e.message)+"</div>";}
+}
+sb.auth.onAuthStateChange((ev)=>{if(ev==="SIGNED_IN")boot();});
+boot();
+</script>
+</body>
+</html>
