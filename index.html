@@ -236,7 +236,7 @@ async function loadAll(){
 /* ===== Month range ===== */
 /* The forecast is forward-only, so every range starts at the current month — there is nothing
    to show before today. "Rest of this year" runs from this month to December. */
-const RANGES=[["6","Next 6 months"],["12","Next 12 months"],["18","Next 18 months"],["cy","Rest of this year"],["all","All"]];
+const RANGES=[["3","Next 3 months"],["6","Next 6 months"],["12","Next 12 months"],["cy","Rest of this year"],["all","All"]];
 function monthKeys(){
   if(F.range==="all")return [...new Set(DATA.monthly.map(r=>r.month_key))].sort();
   const n=new Date(), y=n.getFullYear(), m=n.getMonth();
@@ -245,6 +245,14 @@ function monthKeys(){
   const cnt=Number(F.range),out=[];
   for(let i=0;i<cnt;i++){const d=new Date(y,m+i,1);out.push(key(d.getFullYear(),d.getMonth()));}
   return out;
+}
+
+/* Every total on the page is scoped to the selected months, so the window is spelled out
+   next to the numbers rather than left to be inferred from the button. */
+function spanLabel(){
+  const k=monthKeys();
+  if(!k.length)return "no months in range";
+  return monLabel(k[0])+" – "+monLabel(k[k.length-1])+" · "+k.length+" month"+(k.length===1?"":"s");
 }
 
 /* ===== Filtering ===== */
@@ -370,7 +378,9 @@ function renderForecast(){
     filterBar()+
     bannerHtml()+
     '<div class="kpis">'+
-      kpi("Forecast revenue",usd(rev),"this month onward · "+keys.length+" month"+(keys.length===1?"":"s")+" · "+nTotal+" record"+(nTotal===1?"":"s"))+
+      kpi("Forecast revenue",usd(rev),
+        (keys.length?monLabel(keys[0])+" – "+monLabel(keys[keys.length-1])+" · ":"")+
+        nTotal+" record"+(nTotal===1?"":"s"))+
       kpi("Forecast cost",cCost?usd(cCost):"no data",cCost?("from "+nCosted+" of "+nTotal+" records"):"no cost data in HubSpot yet",!cCost)+
       kpi("Forecast margin",cCost?usd(cRev-cCost):"no data",cCost?("on "+usd(cRev)+" of costed revenue"):"needs advisor rates in HubSpot",!cCost)+
       kpi("Margin %",cCost&&cRev?pct1((cRev-cCost)/cRev*100):"no data",cCost?"costed records only":"—",!cCost)+
@@ -497,8 +507,8 @@ function renderDetail(){
     filterBar()+
     bannerHtml()+
     '<div class="kpis">'+
-      kpi("Records",String(list.length),monthKeys().length+" month window")+
-      kpi("Revenue in range",usd(totRev),"")+
+      kpi("Records",String(list.length),spanLabel())+
+      kpi("Revenue in range",usd(totRev),spanLabel())+
       kpi("Margin in range",cCost?usd(cRev-cCost):"no data",cCost?pct1((cRev-cCost)/cRev*100)+" on costed records":"no cost data in HubSpot yet",!cCost)+
     "</div>"+
     '<div class="panelcard"><div class="ph"><h2>Expected revenue and margin by project or deal</h2>'+
