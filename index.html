@@ -141,6 +141,7 @@
     <div class="seg views" id="segView">
       <button data-v="forecast" class="active">Forecast</button>
       <button data-v="detail">By project &amp; deal</button>
+      <button data-v="pl">P&amp;L</button>
       <button data-v="gaps">Data gaps</button>
     </div>
   </div>
@@ -156,7 +157,9 @@
     over the full HubSpot date range, ignores the month range, and includes finished engagements.
     Projects are work already won; deal stages are open pipeline shown at full value, not
     probability-weighted. Scoping deals with no dollar value are excluded from the forecast and
-    listed under Data gaps. Source: HubSpot Projects and Sales Pipeline deals.
+    listed under Data gaps.
+    <b>P&amp;L</b> is actuals only — no forecast and no HubSpot data in it.
+    Sources: HubSpot Projects and Sales Pipeline deals for the forecast; QuickBooks Online for the P&amp;L.
   </div>
 </div>
 
@@ -218,21 +221,22 @@ const SERIES=[
 function seriesMeta(k){return SERIES.find(s=>s.key===k)||{key:k,cls:"disc",color:"#c2c8cc"};}
 
 /* ===== State ===== */
-let DATA={monthly:[],entities:[],gaps:[],sync:null};
+let DATA={monthly:[],entities:[],gaps:[],pl:[],sync:null};
 let VIEW="forecast";
-let F={range:"12",series:null,clients:null,sort:{col:"contract_revenue",dir:-1}};
+let F={range:"12",series:null,clients:null,sort:{col:"contract_revenue",dir:-1},plRange:"ytd"};
 let CHARTS=[];
 function destroyCharts(){CHARTS.forEach(c=>c.destroy());CHARTS=[];}
 
 /* ===== Load ===== */
 async function loadAll(){
-  const [monthly,entities,gaps,log]=await Promise.all([
+  const [monthly,entities,gaps,pl,log]=await Promise.all([
     sbGet("fc_monthly?select=*&limit=20000"),
     sbGet("fc_entity_totals?select=*&limit=5000"),
     sbGet("fc_gaps?select=*&limit=5000"),
+    sbGet("fc_pl_monthly?select=*&order=period_start&limit=500"),
     sbGet("fc_sync_log?select=*&order=ran_at.desc&limit=1")
   ]);
-  DATA={monthly,entities,gaps,sync:log.length?log[0]:null};
+  DATA={monthly,entities,gaps,pl,sync:log.length?log[0]:null};
 }
 
 /* ===== Month range ===== */
@@ -270,8 +274,13 @@ function activeRows(){
 /* ===== Shell ===== */
 function render(){
   document.getElementById("asof").innerHTML=asOfHtml();
+  /* Every render replaces the view's innerHTML, which orphans any canvas the previous view
+     owned. Chart.js keeps those instances registered, so tear them down here rather than in
+     each renderer — otherwise switching tabs leaks one instance per visit. */
+  destroyCharts();
   if(VIEW==="forecast")renderForecast();
   else if(VIEW==="detail")renderDetail();
+  else if(VIEW==="pl")renderPL();
   else renderGaps();
 }
 function asOfHtml(){
@@ -547,7 +556,138 @@ function renderDetail(){
   }));
 }
 
-/* ===== View 3: Data gaps ===== */
+/* ===== View 3: P&L =====
+   Actuals from QuickBooks, stored in Supabase. Nothing here is forecast, and none of the
+   forecast filters apply — this is the accounting record, not the pipeline. The statement runs
+   to net operating margin and stops there.
+
+   The accounting basis is shown on the tab because it changes what every number means. The
+   load is on whatever basis QuickBooks served; `basis` records which, and the banner says so
+   loudly when it is not the cash basis Rob asked for. */
+const PL_RANGES=[["3","Last 3 months"],["6","Last 6 months"],["ytd","Year to date"],["all","All"]];
+
+function plRows(){
+  const all=DATA.pl.slice().sort((a,b)=>a.period_start<b.period_start?-1:1);
+  if(!all.length)return [];
+  if(F.plRange==="all")return all;
+  if(F.plRange==="ytd"){
+    const y=all[all.length-1].period_start.slice(0,4);
+    return all.filter(r=>r.period_start.slice(0,4)===y);
+  }
+  return all.slice(-Number(F.plRange));
+}
+
+function renderPL(){
+  const rows=plRows();
+  const N=k=>rows.reduce((a,r)=>a+(Number(r[k])||0),0);
+  const rev=N("revenue"), cogs=N("cogs"), gm=N("gross_margin"), opex=N("operating_costs"),
+        noi=N("net_operating_income");
+  const pctOf=v=>rev?v/rev*100:null;
+  const partials=rows.filter(r=>r.is_partial);
+  const asOf=DATA.pl.length?DATA.pl[DATA.pl.length-1]:null;
+  const bases=[...new Set(rows.map(r=>r.basis||"unknown"))];
+  const notCash=bases.some(b=>b!=="cash");
+
+  if(!rows.length){
+    document.getElementById("view").innerHTML=
+      '<div class="panelcard"><div class="ph"><h2>Profit &amp; Loss</h2></div>'+
+      '<div class="empty">No QuickBooks P&amp;L data loaded yet.</div></div>';
+    return;
+  }
+
+  const line=(label,val,pct,cls,note)=>
+    "<tr"+(cls?' class="'+cls+'"':"")+"><td>"+esc(label)+
+      (note?'<div class="dim" style="font-size:11.5px">'+esc(note)+"</div>":"")+"</td>"+
+    rows.map(r=>'<td class="num">'+usd(r[val])+"</td>").join("")+
+    '<td class="num strong">'+usd(N(val))+"</td>"+
+    '<td class="num">'+(pct?pct1(pctOf(N(val))):"")+"</td></tr>";
+
+  document.getElementById("view").innerHTML=
+    '<div class="controls">'+
+      '<div class="seg" id="segPl">'+PL_RANGES.map(r=>'<button data-p="'+r[0]+'"'+(F.plRange===r[0]?' class="active"':"")+">"+esc(r[1])+"</button>").join("")+"</div>"+
+      '<span class="hint">Actuals from QuickBooks &middot; '+esc(monLabel(rows[0].month_key))+" to "+esc(monLabel(rows[rows.length-1].month_key))+"</span>"+
+    "</div>"+
+    (notCash?'<div class="banner"><b>These figures are '+esc(bases.join(" / "))+
+       " basis, not cash basis.</b> Revenue here ties to invoice dates, not to when money arrived — "+
+       "verified against both. The QuickBooks connection available to this dashboard cannot select "+
+       "an accounting method, so a cash-basis load needs a different source. Until then, read this "+
+       "as an accrual statement.</div>":"")+
+    (partials.length?'<div class="banner"><b>'+esc(monLabel(partials[0].month_key))+" is a part month</b> — through "+
+       esc(fmtD(partials[0].period_end))+" only. Costs that post late, contractor bills especially, are not all in yet, "+
+       "so its margin reads high. Treat it as incomplete rather than a trend.</div>":"")+
+    '<div class="kpis">'+
+      kpi("Revenue",usd(rev),plSpan())+
+      kpi("Cost of goods sold",usd(cogs),pct1(pctOf(cogs))+" of revenue")+
+      kpi("Gross margin",usd(gm),pct1(pctOf(gm))+" of revenue")+
+      kpi("Operating costs",usd(opex),pct1(pctOf(opex))+" of revenue")+
+      kpi("Net operating margin",usd(noi),pct1(pctOf(noi))+" of revenue")+
+    "</div>"+
+    '<div class="panelcard"><div class="ph"><h2>Profit &amp; Loss</h2>'+
+      '<span class="sub">QuickBooks actuals. Section totals are QuickBooks’ own,<br>not rebuilt by summing accounts.</span></div>'+
+      '<div class="tscroll"><table class="dt"><thead><tr><th>Line</th>'+
+        rows.map(r=>'<th class="num">'+esc(monLabel(r.month_key))+(r.is_partial?" *":"")+"</th>").join("")+
+        '<th class="num">Total</th><th class="num">% rev</th></tr></thead><tbody>'+
+        line("Revenue","revenue",true)+
+        line("Cost of goods sold","cogs",true)+
+        line("Gross margin","gross_margin",true,"strong")+
+        '<tr><td class="dim">Gross margin %</td>'+
+          rows.map(r=>'<td class="num dim">'+pct1(r.gross_margin_pct)+"</td>").join("")+
+          '<td class="num strong">'+pct1(pctOf(gm))+'</td><td></td></tr>'+
+        line("Total operating costs","operating_costs",true)+
+        line("Net operating income","net_operating_income",true,"strong")+
+        '<tr><td class="dim">Net operating margin %</td>'+
+          rows.map(r=>'<td class="num dim">'+pct1(r.net_operating_margin_pct)+"</td>").join("")+
+          '<td class="num strong">'+pct1(pctOf(noi))+'</td><td></td></tr>'+
+      "</tbody></table></div>"+
+      (partials.length?'<div class="legend"><span>* part month</span></div>':"")+
+    "</div>"+
+    '<div class="panelcard"><div class="ph"><h2>Revenue, cost and margin by month</h2>'+
+      '<span class="sub">Bars are dollars on the left axis; lines are margin % on the right</span></div>'+
+      '<div class="chartbox"><canvas id="cPl"></canvas></div>'+
+      '<div class="legend">'+
+        '<span><i style="background:#333f48"></i>Revenue</span>'+
+        '<span><i style="background:#9b2743"></i>COGS</span>'+
+        '<span><i style="background:#EF9F27"></i>Operating costs</span>'+
+        '<span><i style="background:#5a8a2e"></i>Gross margin %</span>'+
+        '<span><i style="background:#378ADD"></i>Net operating margin %</span>'+
+      "</div>"+
+    "</div>"+
+    '<div class="foot" style="border:0;margin-top:6px">'+
+      "Source: QuickBooks Online, company Waypost Advisors LLC &middot; "+esc(bases.join(" / "))+" basis"+
+      (asOf&&asOf.pulled_at?" &middot; pulled "+esc(new Date(asOf.pulled_at).toLocaleString()):"")+
+    "</div>";
+
+  const seg=document.getElementById("segPl");
+  if(seg)seg.addEventListener("click",e=>{
+    const b=e.target.closest("button");if(!b)return;F.plRange=b.dataset.p;render();
+  });
+
+  destroyCharts();
+  CHARTS.push(new Chart(document.getElementById("cPl"),{
+    type:"bar",
+    data:{labels:rows.map(r=>monLabel(r.month_key)),datasets:[
+      {label:"Revenue",data:rows.map(r=>Number(r.revenue)),backgroundColor:"#333f48",borderRadius:3,maxBarThickness:26,order:3},
+      {label:"COGS",data:rows.map(r=>Number(r.cogs)),backgroundColor:"#9b2743",borderRadius:3,maxBarThickness:26,order:3},
+      {label:"Operating costs",data:rows.map(r=>Number(r.operating_costs)),backgroundColor:"#EF9F27",borderRadius:3,maxBarThickness:26,order:3},
+      {label:"Gross margin %",type:"line",yAxisID:"y1",order:1,data:rows.map(r=>r.gross_margin_pct===null?null:Number(r.gross_margin_pct)),
+       borderColor:"#5a8a2e",backgroundColor:"#5a8a2e",borderWidth:2.5,tension:.28,pointRadius:3,spanGaps:true},
+      {label:"Net operating margin %",type:"line",yAxisID:"y1",order:2,data:rows.map(r=>r.net_operating_margin_pct===null?null:Number(r.net_operating_margin_pct)),
+       borderColor:"#378ADD",backgroundColor:"#378ADD",borderWidth:2.5,borderDash:[5,3],tension:.28,pointRadius:3,spanGaps:true}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.dataset.label+": "+(c.dataset.yAxisID==="y1"?pct1(c.parsed.y):usd(c.parsed.y))}}},
+      scales:{x:{grid:{display:false}},
+              y:{beginAtZero:true,ticks:{callback:v=>usdK(v)},grid:{color:"#f0eee7",borderDash:[3,3]}},
+              y1:{position:"right",ticks:{callback:v=>v+"%"},grid:{display:false}}}}
+  }));
+}
+function plSpan(){
+  const r=plRows();
+  if(!r.length)return "no data";
+  return monLabel(r[0].month_key)+" – "+monLabel(r[r.length-1].month_key)+" · "+r.length+" month"+(r.length===1?"":"s");
+}
+
+/* ===== View 4: Data gaps ===== */
 function renderGaps(){
   const blocking=DATA.gaps.filter(x=>x.severity==="blocking");
   const info=DATA.gaps.filter(x=>x.severity==="info");
