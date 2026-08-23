@@ -148,13 +148,15 @@
   <div id="view"><div class="loading">Loading&hellip;</div></div>
 
   <div class="foot">
-    Forward-looking only. Revenue and cost are spread across months at the contract's daily rate,
-    and months that have already finished are excluded, so work already delivered is not counted as
-    forecast. The current month always counts in full. An in-flight project contributes its
-    remaining pro-rata share; one that ended before this month contributes nothing. Projects are
-    work already won; deal stages are open pipeline shown at full value, not probability-weighted.
-    Scoping deals with no dollar value are excluded and listed under Data gaps.
-    Source: HubSpot Projects and Sales Pipeline deals.
+    <b>Forecast</b> is forward-looking: revenue and cost are spread across months at the contract's
+    daily rate, and finished months are excluded so delivered work is not counted as forecast. The
+    current month always counts in full. An in-flight project contributes its remaining pro-rata
+    share; one that ended before this month contributes nothing.
+    <b>By project &amp; deal</b> is not a forecast — it reports whole-contract revenue and margin
+    over the full HubSpot date range, ignores the month range, and includes finished engagements.
+    Projects are work already won; deal stages are open pipeline shown at full value, not
+    probability-weighted. Scoping deals with no dollar value are excluded from the forecast and
+    listed under Data gaps. Source: HubSpot Projects and Sales Pipeline deals.
   </div>
 </div>
 
@@ -207,7 +209,7 @@ function toast(msg,bad){const t=document.getElementById("toast");t.textContent=m
 
 /* ===== Series, stacked most-certain first ===== */
 const SERIES=[
-  {key:"Active projects", cls:"proj",     color:"#333f48"},
+  {key:"Projects",        cls:"proj",     color:"#333f48"},
   {key:"Contract Review", cls:"contract", color:"#378ADD"},
   {key:"Proposal",        cls:"proposal", color:"#EF9F27"},
   {key:"Scoping",         cls:"scoping",  color:"#7C5CCB"},
@@ -218,7 +220,7 @@ function seriesMeta(k){return SERIES.find(s=>s.key===k)||{key:k,cls:"disc",color
 /* ===== State ===== */
 let DATA={monthly:[],entities:[],gaps:[],sync:null};
 let VIEW="forecast";
-let F={range:"12",series:null,clients:null,sort:{col:"revenue",dir:-1}};
+let F={range:"12",series:null,clients:null,sort:{col:"contract_revenue",dir:-1}};
 let CHARTS=[];
 function destroyCharts(){CHARTS.forEach(c=>c.destroy());CHARTS=[];}
 
@@ -305,13 +307,16 @@ function wireBanner(){
 }
 
 /* ===== Shared filter bar ===== */
-function filterBar(){
-  const allClients=[...new Set(DATA.monthly.map(r=>r.client||"—"))].sort();
-  const allSeries=SERIES.map(s=>s.key).filter(k=>DATA.monthly.some(r=>r.series_label===k));
+/* showRange=false on the project-margin tab, which is deliberately not range-scoped — leaving
+   the picker visible there would imply it does something. Option lists come from the entity
+   set, which is the superset (it includes finished work the forecast has dropped). */
+function filterBar(showRange){
+  const allClients=[...new Set(DATA.entities.map(r=>r.client||"—"))].sort();
+  const allSeries=SERIES.map(s=>s.key).filter(k=>DATA.entities.some(r=>r.series_label===k));
   const cLabel=!F.clients?"All clients":(F.clients.size===1?[...F.clients][0]:F.clients.size+" clients");
   const sLabel=!F.series?"Projects + all stages":(F.series.size===1?[...F.series][0]:F.series.size+" selected");
   return '<div class="controls">'+
-    '<div class="seg" id="segRange">'+RANGES.map(r=>'<button data-r="'+r[0]+'"'+(F.range===r[0]?' class="active"':"")+">"+esc(r[1])+"</button>").join("")+"</div>"+
+    (showRange?'<div class="seg" id="segRange">'+RANGES.map(r=>'<button data-r="'+r[0]+'"'+(F.range===r[0]?' class="active"':"")+">"+esc(r[1])+"</button>").join("")+"</div>":"")+
     '<span class="flabel">Show:</span>'+
     '<div class="ms" id="msSeries"><button class="btn" id="msSeriesBtn">'+esc(sLabel)+" &#9662;</button>"+
       '<div class="mspanel"><label><input type="checkbox" id="sAll"'+(!F.series?" checked":"")+'> <b>Projects + all stages</b></label><div class="div"></div>'+
@@ -375,12 +380,10 @@ function renderForecast(){
   }));
 
   document.getElementById("view").innerHTML=
-    filterBar()+
+    filterBar(true)+
     bannerHtml()+
     '<div class="kpis">'+
-      kpi("Forecast revenue",usd(rev),
-        (keys.length?monLabel(keys[0])+" – "+monLabel(keys[keys.length-1])+" · ":"")+
-        nTotal+" record"+(nTotal===1?"":"s"))+
+      kpi("Forecast revenue",usd(rev),spanLabel()+" · "+nTotal+" record"+(nTotal===1?"":"s"))+
       kpi("Forecast cost",cCost?usd(cCost):"no data",cCost?("from "+nCosted+" of "+nTotal+" records"):"no cost data in HubSpot yet",!cCost)+
       kpi("Forecast margin",cCost?usd(cRev-cCost):"no data",cCost?("on "+usd(cRev)+" of costed revenue"):"needs advisor rates in HubSpot",!cCost)+
       kpi("Margin %",cCost&&cRev?pct1((cRev-cCost)/cRev*100):"no data",cCost?"costed records only":"—",!cCost)+
@@ -451,43 +454,34 @@ function renderForecast(){
   }
 }
 
-/* ===== View 2: By project and deal ===== */
+/* ===== View 2: By project and deal =====
+   This tab answers "what is the margin on this engagement", which is a whole-contract question.
+   So it uses the full HubSpot date range, ignores the month-range picker entirely, and includes
+   finished work — a delivered project is exactly the kind of thing you want margin on. */
 const DCOLS=[
   {k:"series_label",l:"Type",num:false},
   {k:"name",l:"Project / deal",num:false},
   {k:"client",l:"Client",num:false},
   {k:"owner",l:"Owner",num:false},
   {k:"start_date",l:"Contract window",num:false},
-  {k:"revenue",l:"Remaining in range",num:true},
-  {k:"cost",l:"Cost",num:true},
-  {k:"margin",l:"Margin",num:true},
-  {k:"margin_pct",l:"Margin %",num:true},
-  {k:"basis",l:"Cost basis",num:false}
+  {k:"contract_revenue",l:"Contract revenue",num:true},
+  {k:"contract_cost",l:"Cost",num:true},
+  {k:"contract_margin",l:"Margin",num:true},
+  {k:"contract_margin_pct",l:"Margin %",num:true},
+  {k:"cost_basis",l:"Cost basis",num:false}
 ];
 const BASIS_LABEL={advisor_rates:"Advisor rates",hs_total_cost:"Project cost total",estimated_cost:"Deal estimated cost",none:"None"};
 
 function renderDetail(){
-  const rows=activeRows();
-  const ent=new Map(DATA.entities.map(e=>[e.entity_id,e]));
-  const agg=new Map();
-  rows.forEach(r=>{
-    if(!agg.has(r.entity_id)){
-      const e=ent.get(r.entity_id)||{};
-      agg.set(r.entity_id,{
-        entity_id:r.entity_id,kind:r.kind,series_label:r.series_label,name:r.name,client:r.client,owner:r.owner,
-        start_date:e.start_date,end_date:e.end_date,dates_source:e.dates_source,
-        forecast_start_date:e.forecast_start_date,
-        amount:e.amount,basis:r.cost_basis,revenue:0,cost:0,hasCost:r.cost_basis!=="none"
-      });
-    }
-    const o=agg.get(r.entity_id);
-    o.revenue+=Number(r.revenue)||0;
-    o.cost+=Number(r.cost)||0;
-  });
-  let list=[...agg.values()].map(o=>Object.assign({},o,{
-    margin:o.hasCost?o.revenue-o.cost:null,
-    margin_pct:(o.hasCost&&o.revenue)?(o.revenue-o.cost)/o.revenue*100:null,
-    cost:o.hasCost?o.cost:null
+  /* Straight off the entity set — no month filtering, so nothing is clipped by the range. */
+  let list=DATA.entities.filter(e=>
+    (!F.series  || F.series.has(e.series_label)) &&
+    (!F.clients || F.clients.has(e.client||"—"))
+  ).map(e=>Object.assign({},e,{
+    contract_revenue:e.contract_revenue===null?null:Number(e.contract_revenue),
+    contract_cost:e.contract_cost===null?null:Number(e.contract_cost),
+    contract_margin:e.contract_margin===null?null:Number(e.contract_margin),
+    contract_margin_pct:e.contract_margin_pct===null?null:Number(e.contract_margin_pct)
   }));
 
   const sc=F.sort.col,sd=F.sort.dir;
@@ -499,20 +493,23 @@ function renderDetail(){
     return String(x).localeCompare(String(y))*sd;
   });
 
-  const totRev=sum(list,r=>r.revenue);
-  const costedList=list.filter(r=>r.hasCost);
-  const cRev=sum(costedList,r=>r.revenue),cCost=sum(costedList,r=>r.cost);
+  const totRev=sum(list,r=>r.contract_revenue);
+  const costedList=list.filter(r=>r.contract_cost!==null);
+  const cRev=sum(costedList,r=>r.contract_revenue),cCost=sum(costedList,r=>r.contract_cost);
+  const nFin=list.filter(r=>r.is_finished).length;
 
   document.getElementById("view").innerHTML=
-    filterBar()+
+    filterBar(false)+
     bannerHtml()+
     '<div class="kpis">'+
-      kpi("Records",String(list.length),spanLabel())+
-      kpi("Revenue in range",usd(totRev),spanLabel())+
-      kpi("Margin in range",cCost?usd(cRev-cCost):"no data",cCost?pct1((cRev-cCost)/cRev*100)+" on costed records":"no cost data in HubSpot yet",!cCost)+
+      kpi("Engagements",String(list.length),nFin?(nFin+" already finished"):"none finished yet")+
+      kpi("Contract revenue",usd(totRev),"full HubSpot date range")+
+      kpi("Contract cost",cCost?usd(cCost):"no data",cCost?("from "+costedList.length+" of "+list.length+" records"):"no cost data in HubSpot yet",!cCost)+
+      kpi("Contract margin",cCost?usd(cRev-cCost):"no data",cCost?("on "+usd(cRev)+" of costed revenue"):"needs advisor rates in HubSpot",!cCost)+
+      kpi("Margin %",cCost&&cRev?pct1((cRev-cCost)/cRev*100):"no data",cCost?"costed records only":"—",!cCost)+
     "</div>"+
-    '<div class="panelcard"><div class="ph"><h2>Expected revenue and margin by project or deal</h2>'+
-      '<span class="sub">The figure is what falls inside the selected months, not the whole contract.<br>Work already delivered in finished months is excluded.</span></div>'+
+    '<div class="panelcard"><div class="ph"><h2>Margin by project or deal</h2>'+
+      '<span class="sub">Whole-contract figures over the full HubSpot date range — not a forecast,<br>so the month range does not apply and finished work is included.</span></div>'+
       (list.length?'<div class="tscroll"><table class="dt"><thead><tr>'+
         DCOLS.map(c=>'<th class="sortable'+(c.num?" num":"")+'" data-c="'+c.k+'">'+esc(c.l)+
           (sc===c.k?' <span class="arw">'+(sd>0?"▲":"▼")+"</span>":"")+"</th>").join("")+
@@ -521,23 +518,22 @@ function renderDetail(){
           const m=seriesMeta(r.series_label);
           const win=(r.start_date?fmtD(r.start_date):"—")+" – "+(r.end_date?fmtD(r.end_date):"—");
           const est=r.dates_source&&r.dates_source!=="hubspot";
-          /* Already under way: the finished months are not in the forecast, so the figure
-             shown is only the remainder of the contract. Say so on the row. */
-          const inFlight=r.forecast_start_date&&r.start_date&&r.forecast_start_date>r.start_date;
+          const days=r.window_days?r.window_days+" days":null;
           return "<tr>"+
             '<td><span class="pill '+m.cls+'">'+esc(r.series_label)+"</span></td>"+
             "<td>"+esc(r.name||"—")+
-              (r.amount?'<div class="dim" style="font-size:11.5px">Contract total '+usd(r.amount)+"</div>":"")+"</td>"+
+              (r.is_finished?'<div><span class="taginfo">finished</span></div>':"")+
+              (!r.in_forecast?'<div><span class="tagblock">not in forecast</span></div>':"")+"</td>"+
             "<td>"+esc(r.client||"—")+"</td>"+
             "<td>"+esc(r.owner||"—")+"</td>"+
             "<td>"+esc(win)+
-              (inFlight?'<div><span class="taginfo">in flight &middot; counting from '+esc(fmtD(r.forecast_start_date))+"</span></div>":"")+
+              (days?'<div class="dim" style="font-size:11.5px">'+esc(days)+"</div>":"")+
               (est?'<div><span class="taginfo">dates estimated</span></div>':"")+"</td>"+
-            '<td class="num strong">'+usd(r.revenue)+"</td>"+
-            '<td class="num">'+usd(r.cost)+"</td>"+
-            '<td class="num strong">'+usd(r.margin)+"</td>"+
-            '<td class="num">'+pct1(r.margin_pct)+"</td>"+
-            "<td>"+(r.basis==="none"?'<span class="tagblock">missing</span>':esc(BASIS_LABEL[r.basis]||r.basis))+"</td>"+
+            '<td class="num strong">'+usd(r.contract_revenue)+"</td>"+
+            '<td class="num">'+usd(r.contract_cost)+"</td>"+
+            '<td class="num strong">'+usd(r.contract_margin)+"</td>"+
+            '<td class="num">'+pct1(r.contract_margin_pct)+"</td>"+
+            "<td>"+(r.cost_basis==="none"?'<span class="tagblock">missing</span>':esc(BASIS_LABEL[r.cost_basis]||r.cost_basis))+"</td>"+
           "</tr>";
         }).join("")+
         "</tbody></table></div>":'<div class="empty">Nothing matches these filters.</div>')+
