@@ -158,7 +158,9 @@
     Projects are work already won; deal stages are open pipeline shown at full value, not
     probability-weighted. Scoping deals with no dollar value are excluded from the forecast and
     listed under Data gaps.
-    <b>P&amp;L</b> is actuals only — no forecast and no HubSpot data in it.
+    <b>P&amp;L</b> is actuals only — no forecast and no HubSpot data in it. It runs through the
+    last complete month and rolls forward as each month closes; the month in flight is left out
+    because its costs are not all posted yet.
     Sources: HubSpot Projects and Sales Pipeline deals for the forecast; QuickBooks Online for the P&amp;L.
   </div>
 </div>
@@ -563,11 +565,17 @@ function renderDetail(){
 
    The accounting basis is shown on the tab because it changes what every number means. The
    load is on whatever basis QuickBooks served; `basis` records which, and the banner says so
-   loudly when it is not the cash basis Rob asked for. */
+   loudly when it is not the cash basis Rob asked for.
+
+   The statement ends at the last COMPLETE month and rolls forward as months close. A month
+   still in flight is excluded, not shortened: late-posting costs, contractor bills especially,
+   make a part month read high on margin, and a half-month bar next to full ones invites a false
+   trend read. `public.fc_pl_monthly` already drops it; the filter here is a second line of
+   defence in case the view is ever widened again. */
 const PL_RANGES=[["3","Last 3 months"],["6","Last 6 months"],["ytd","Year to date"],["all","All"]];
 
 function plRows(){
-  const all=DATA.pl.slice().sort((a,b)=>a.period_start<b.period_start?-1:1);
+  const all=DATA.pl.filter(r=>!r.is_partial).sort((a,b)=>a.period_start<b.period_start?-1:1);
   if(!all.length)return [];
   if(F.plRange==="all")return all;
   if(F.plRange==="ytd"){
@@ -583,15 +591,16 @@ function renderPL(){
   const rev=N("revenue"), cogs=N("cogs"), gm=N("gross_margin"), opex=N("operating_costs"),
         noi=N("net_operating_income");
   const pctOf=v=>rev?v/rev*100:null;
-  const partials=rows.filter(r=>r.is_partial);
-  const asOf=DATA.pl.length?DATA.pl[DATA.pl.length-1]:null;
+  const asOf=rows[rows.length-1]||null;
   const bases=[...new Set(rows.map(r=>r.basis||"unknown"))];
   const notCash=bases.some(b=>b!=="cash");
 
   if(!rows.length){
     document.getElementById("view").innerHTML=
       '<div class="panelcard"><div class="ph"><h2>Profit &amp; Loss</h2></div>'+
-      '<div class="empty">No QuickBooks P&amp;L data loaded yet.</div></div>';
+      '<div class="empty">'+(DATA.pl.length
+        ?"No complete month loaded yet — the P&amp;L starts once the first month closes."
+        :"No QuickBooks P&amp;L data loaded yet.")+"</div></div>";
     return;
   }
 
@@ -605,16 +614,14 @@ function renderPL(){
   document.getElementById("view").innerHTML=
     '<div class="controls">'+
       '<div class="seg" id="segPl">'+PL_RANGES.map(r=>'<button data-p="'+r[0]+'"'+(F.plRange===r[0]?' class="active"':"")+">"+esc(r[1])+"</button>").join("")+"</div>"+
-      '<span class="hint">Actuals from QuickBooks &middot; '+esc(monLabel(rows[0].month_key))+" to "+esc(monLabel(rows[rows.length-1].month_key))+"</span>"+
+      '<span class="hint">Actuals from QuickBooks &middot; '+esc(monLabel(rows[0].month_key))+" to "+esc(monLabel(rows[rows.length-1].month_key))+
+        " &middot; complete months only</span>"+
     "</div>"+
     (notCash?'<div class="banner"><b>These figures are '+esc(bases.join(" / "))+
        " basis, not cash basis.</b> Revenue here ties to invoice dates, not to when money arrived — "+
        "verified against both. The QuickBooks connection available to this dashboard cannot select "+
        "an accounting method, so a cash-basis load needs a different source. Until then, read this "+
        "as an accrual statement.</div>":"")+
-    (partials.length?'<div class="banner"><b>'+esc(monLabel(partials[0].month_key))+" is a part month</b> — through "+
-       esc(fmtD(partials[0].period_end))+" only. Costs that post late, contractor bills especially, are not all in yet, "+
-       "so its margin reads high. Treat it as incomplete rather than a trend.</div>":"")+
     '<div class="kpis">'+
       kpi("Revenue",usd(rev),plSpan())+
       kpi("Cost of goods sold",usd(cogs),pct1(pctOf(cogs))+" of revenue")+
@@ -623,9 +630,9 @@ function renderPL(){
       kpi("Net operating margin",usd(noi),pct1(pctOf(noi))+" of revenue")+
     "</div>"+
     '<div class="panelcard"><div class="ph"><h2>Profit &amp; Loss</h2>'+
-      '<span class="sub">QuickBooks actuals. Section totals are QuickBooks’ own,<br>not rebuilt by summing accounts.</span></div>'+
+      '<span class="sub">QuickBooks actuals through the last complete month. Section totals are<br>QuickBooks’ own, not rebuilt by summing accounts.</span></div>'+
       '<div class="tscroll"><table class="dt"><thead><tr><th>Line</th>'+
-        rows.map(r=>'<th class="num">'+esc(monLabel(r.month_key))+(r.is_partial?" *":"")+"</th>").join("")+
+        rows.map(r=>'<th class="num">'+esc(monLabel(r.month_key))+"</th>").join("")+
         '<th class="num">Total</th><th class="num">% rev</th></tr></thead><tbody>'+
         line("Revenue","revenue",true)+
         line("Cost of goods sold","cogs",true)+
@@ -639,7 +646,6 @@ function renderPL(){
           rows.map(r=>'<td class="num dim">'+pct1(r.net_operating_margin_pct)+"</td>").join("")+
           '<td class="num strong">'+pct1(pctOf(noi))+'</td><td></td></tr>'+
       "</tbody></table></div>"+
-      (partials.length?'<div class="legend"><span>* part month</span></div>':"")+
     "</div>"+
     '<div class="panelcard"><div class="ph"><h2>Revenue, cost and margin by month</h2>'+
       '<span class="sub">Bars are dollars on the left axis; lines are margin % on the right</span></div>'+
