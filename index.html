@@ -730,10 +730,12 @@ function gapTypeLabel(r){
    entered rate ("Cannot tell whether 4000 is hourly, weekly or a lump sum"), so the figure is
    stripped on the way out. The on-screen tables are unchanged — inside the tool the rate is
    fine to show. */
-/* Whitespace is collapsed as well as redacted: both exports lay detail text out on a fixed
-   indent, so a stray newline arriving from HubSpot would break the shape of the block. */
-function exportDetail(s){
-  return String(s==null?"":s)
+/* Redaction now lives in the view as fc_gaps.detail_safe, so every consumer inherits it —
+   this page, n8n, anything else. The local rewrite is kept only as a fallback for the case
+   where the page is newer than the view; if detail_safe is present it always wins. */
+function exportDetail(r){
+  if(r&&r.detail_safe)return r.detail_safe;
+  return String(r&&r.detail!=null?r.detail:"")
     .replace(/Cannot tell whether [\d.,]+ is/,"Cannot tell whether the entered rate is")
     .replace(/\s+/g," ").trim();
 }
@@ -759,7 +761,7 @@ function gapsCsv(rows){
     r.name||"",
     r.client||"",
     r.issue||"",
-    exportDetail(r.detail)
+    exportDetail(r)
   ].map(q).join(","))).join("\r\n");
 }
 
@@ -804,7 +806,7 @@ function gapsText(rows){
         out.push("   "+g.type+(g.client?" · "+g.client:""));
         g.items.forEach(r=>{
           out.push("   • "+r.issue);
-          out.push("     "+exportDetail(r.detail));
+          out.push("     "+exportDetail(r));
         });
       });
     });
