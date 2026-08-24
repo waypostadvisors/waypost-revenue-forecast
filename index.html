@@ -83,6 +83,12 @@
   .banner b{font-weight:800}
   .banner a{color:#7a2320;font-weight:800;cursor:pointer;text-decoration:underline}
 
+  /* Neutral note. The red .banner means something is wrong; .notebar means something is
+     worth knowing. The accounting-basis note is the latter — accrual is the chosen basis,
+     not a fault state. */
+  .notebar{background:#fff;border:1px solid var(--smoke);border-left:3px solid var(--charcoal);border-radius:10px;padding:11px 15px;margin-top:14px;font-size:12.5px;color:var(--ink)}
+  .notebar b{font-weight:800}
+
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:800;letter-spacing:.03em;white-space:nowrap;color:#fff}
   .pill.proj{background:var(--s-proj)}
   .pill.contract{background:var(--s-contract)}
@@ -564,8 +570,10 @@ function renderDetail(){
    to net operating margin and stops there.
 
    The accounting basis is shown on the tab because it changes what every number means. The
-   load is on whatever basis QuickBooks served; `basis` records which, and the banner says so
-   loudly when it is not the cash basis Rob asked for.
+   load is on whatever basis QuickBooks served and `basis` records which, read back from
+   QuickBooks' own AccountingStandard header rather than assumed. Accrual is the deliberate
+   basis as of 2026-08-24 (Rob dropped the cash-basis switch); the note names it and warns
+   that cash-basis results diverge month to month, so nobody reads these bars as cash flow.
 
    The statement ends at the last COMPLETE month and rolls forward as months close. A month
    still in flight is excluded, not shortened: late-posting costs, contractor bills especially,
@@ -617,11 +625,11 @@ function renderPL(){
       '<span class="hint">Actuals from QuickBooks &middot; '+esc(monLabel(rows[0].month_key))+" to "+esc(monLabel(rows[rows.length-1].month_key))+
         " &middot; complete months only</span>"+
     "</div>"+
-    (notCash?'<div class="banner"><b>These figures are '+esc(bases.join(" / "))+
-       " basis, not cash basis.</b> Revenue here ties to invoice dates, not to when money arrived — "+
-       "verified against both. The QuickBooks connection available to this dashboard cannot select "+
-       "an accounting method, so a cash-basis load needs a different source. Until then, read this "+
-       "as an accrual statement.</div>":"")+
+    (notCash?'<div class="notebar"><b>These figures are '+esc(bases.join(" / "))+
+       " basis.</b> Revenue is recognized when it was invoiced, not when the money arrived &mdash; "+
+       "verified against both. <b>Cash-basis results can differ significantly in any single "+
+       "month</b>, because payment timing runs well behind invoice dates. Read the monthly "+
+       "pattern here as billing activity, not as cash flow.</div>":"")+
     '<div class="kpis">'+
       kpi("Revenue",usd(rev),plSpan())+
       kpi("Cost of goods sold",usd(cogs),pct1(pctOf(cogs))+" of revenue")+
