@@ -231,7 +231,7 @@ function seriesMeta(k){return SERIES.find(s=>s.key===k)||{key:k,cls:"disc",color
 /* ===== State ===== */
 let DATA={monthly:[],entities:[],gaps:[],pl:[],sync:null};
 let VIEW="forecast";
-let F={range:"12",series:null,clients:null,sort:{col:"contract_revenue",dir:-1},plRange:"ytd"};
+let F={range:"12",series:null,clients:null,sort:{col:"contract_revenue",dir:-1},plRange:"ytd",gapOwners:null};
 let CHARTS=[];
 function destroyCharts(){CHARTS.forEach(c=>c.destroy());CHARTS=[];}
 
@@ -702,23 +702,161 @@ function plSpan(){
 }
 
 /* ===== View 4: Data gaps ===== */
+/* This is the one view whose audience is mostly *outside* the access list: the people who own
+   the blank HubSpot fields are not the three people who can open this tool. So it carries its
+   own owner filter and two export paths (CSV, plain text) rather than being read-only. */
+
+const UNASSIGNED="Owner not set";
+function gapOwner(r){return r.owner||UNASSIGNED;}
+/* "Owner not set" sorts last rather than alphabetically into the middle — it is not a person to
+   chase, it is Rob's to reassign, so it belongs at the bottom of every list. */
+function ownerSort(a,b){
+  if(a===UNASSIGNED)return b===UNASSIGNED?0:1;
+  if(b===UNASSIGNED)return -1;
+  return a.localeCompare(b);
+}
+function gapOwnerList(){return [...new Set(DATA.gaps.map(gapOwner))].sort(ownerSort);}
+function gapRows(){
+  return DATA.gaps.filter(r=>!F.gapOwners||F.gapOwners.has(gapOwner(r)));
+}
+function gapTypeLabel(r){
+  if(r.kind==="project")return "Project";
+  if(r.kind==="won_deal")return "Won deal";
+  return r.stage_label||"Deal";
+}
+
+/* Advisor pay rates are the reason this tool has a tighter allow-list than the other two, and
+   these exports are built to be pasted to people who are not on it. One gap detail embeds the
+   entered rate ("Cannot tell whether 4000 is hourly, weekly or a lump sum"), so the figure is
+   stripped on the way out. The on-screen tables are unchanged — inside the tool the rate is
+   fine to show. */
+/* Whitespace is collapsed as well as redacted: both exports lay detail text out on a fixed
+   indent, so a stray newline arriving from HubSpot would break the shape of the block. */
+function exportDetail(s){
+  return String(s==null?"":s)
+    .replace(/Cannot tell whether [\d.,]+ is/,"Cannot tell whether the entered rate is")
+    .replace(/\s+/g," ").trim();
+}
+function stamp(){
+  const d=new Date();
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+
+/* Leading ﻿: Excel is the likely destination and without a BOM it reads the file as the
+   local codepage, which mangles any non-ASCII in a client or advisor name. */
+function gapsCsv(rows){
+  const q=v=>{const s=String(v==null?"":v);return /[",\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
+  const head=["Owner","Priority","Type","Project / deal","Client","What is missing","Why it matters"];
+  const sorted=rows.slice().sort((a,b)=>
+    ownerSort(gapOwner(a),gapOwner(b)) ||
+    (a.severity==="blocking"?0:1)-(b.severity==="blocking"?0:1) ||
+    String(a.name||"").localeCompare(String(b.name||"")) ||
+    String(a.issue||"").localeCompare(String(b.issue||"")));
+  return "﻿"+[head.join(",")].concat(sorted.map(r=>[
+    gapOwner(r),
+    r.severity==="blocking"?"Must fix":"Worth tightening",
+    gapTypeLabel(r),
+    r.name||"",
+    r.client||"",
+    r.issue||"",
+    exportDetail(r.detail)
+  ].map(q).join(","))).join("\r\n");
+}
+
+/* Grouped owner -> priority -> record, because the reader's question is "what do I have to go
+   and type in", not "what is wrong with the forecast". */
+function gapsText(rows){
+  const owners=[...new Set(rows.map(gapOwner))].sort(ownerSort);
+  const nb=rows.filter(r=>r.severity==="blocking").length;
+  const out=[];
+  out.push("Waypost revenue forecast — outstanding HubSpot fields");
+  out.push("Pulled "+stamp()+" · "+rows.length+" item"+(rows.length===1?"":"s")+
+           " · "+nb+" must fix · "+owners.length+" owner"+(owners.length===1?"":"s"));
+  out.push("");
+  out.push("These fields are blank on the Project or Deal in HubSpot. Until they are filled the");
+  out.push("forecast cannot calculate cost or margin on the records listed. Edit them directly on");
+  out.push("the HubSpot record — no other system is involved.");
+
+  owners.forEach(o=>{
+    const mine=rows.filter(r=>gapOwner(r)===o);
+    const bl=mine.filter(r=>r.severity==="blocking"), inf=mine.filter(r=>r.severity==="info");
+    out.push("");
+    out.push("=".repeat(72));
+    out.push(o.toUpperCase()+" — "+bl.length+" must fix, "+inf.length+" worth tightening");
+    out.push("=".repeat(72));
+    [[bl,"MUST FIX — a number is missing until these are filled"],
+     [inf,"WORTH TIGHTENING — the forecast works, just less precisely"]].forEach(([set,hdr])=>{
+      if(!set.length)return;
+      out.push("");
+      out.push(hdr);
+      /* One block per record, not per gap — a project with three blanks should read as one
+         errand rather than three. */
+      const byRec=[];
+      set.forEach(r=>{
+        const k=(r.name||"")+"|"+(r.client||"");
+        let g=byRec.find(x=>x.k===k);
+        if(!g){g={k,name:r.name,client:r.client,type:gapTypeLabel(r),items:[]};byRec.push(g);}
+        g.items.push(r);
+      });
+      byRec.forEach((g,i)=>{
+        out.push("");
+        out.push((i+1)+". "+(g.name||"(unnamed)"));
+        out.push("   "+g.type+(g.client?" · "+g.client:""));
+        g.items.forEach(r=>{
+          out.push("   • "+r.issue);
+          out.push("     "+exportDetail(r.detail));
+        });
+      });
+    });
+  });
+  out.push("");
+  out.push("Questions on any of these — reply to Rob.");
+  return out.join("\n");
+}
+
+function download(name,text,mime){
+  const b=new Blob([text],{type:mime+";charset=utf-8"}),u=URL.createObjectURL(b);
+  const a=document.createElement("a");a.href=u;a.download=name;
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(u),2000);
+}
+/* navigator.clipboard needs a secure context and can still be refused, so fall back to a
+   hidden textarea rather than failing silently on a copy the user is waiting for. */
+async function copyToClipboard(text){
+  try{
+    if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(text);return true;}
+  }catch(e){}
+  const ta=document.createElement("textarea");
+  ta.value=text;ta.setAttribute("readonly","");
+  ta.style.position="fixed";ta.style.top="-1000px";
+  document.body.appendChild(ta);ta.select();
+  let ok=false;try{ok=document.execCommand("copy");}catch(e){ok=false;}
+  ta.remove();return ok;
+}
+
 function renderGaps(){
-  const blocking=DATA.gaps.filter(x=>x.severity==="blocking");
-  const info=DATA.gaps.filter(x=>x.severity==="info");
-  const tbl=(rows,title,note)=>
+  const rows=gapRows();
+  const blocking=rows.filter(x=>x.severity==="blocking");
+  const info=rows.filter(x=>x.severity==="info");
+  const owners=gapOwnerList();
+  const oLabel=!F.gapOwners?"All owners":(F.gapOwners.size===1?[...F.gapOwners][0]:F.gapOwners.size+" owners");
+  const counts={};DATA.gaps.forEach(r=>{counts[gapOwner(r)]=(counts[gapOwner(r)]||0)+1;});
+
+  const tbl=(rs,title,note)=>
     '<div class="panelcard"><div class="ph"><h2>'+esc(title)+'</h2><span class="sub">'+esc(note)+"</span></div>"+
-    (rows.length?'<div class="tscroll"><table class="dt"><thead><tr>'+
-      "<th>Type</th><th>Project / deal</th><th>Client</th><th>What is missing</th><th>Why it matters</th>"+
+    (rs.length?'<div class="tscroll"><table class="dt"><thead><tr>'+
+      "<th>Type</th><th>Project / deal</th><th>Client</th><th>Owner</th><th>What is missing</th><th>Why it matters</th>"+
       "</tr></thead><tbody>"+
-      rows.map(r=>{
-        let label,cls;
-        if(r.kind==="project"){label="Project";cls="proj";}
-        else if(r.kind==="won_deal"){label="Won deal";cls="won";}
-        else {label=r.stage_label||"Deal";cls=seriesMeta(r.stage_label).cls;}
+      rs.map(r=>{
+        let cls;
+        if(r.kind==="project")cls="proj";
+        else if(r.kind==="won_deal")cls="won";
+        else cls=seriesMeta(r.stage_label).cls;
         return "<tr>"+
-          '<td><span class="pill '+cls+'">'+esc(label)+"</span></td>"+
+          '<td><span class="pill '+cls+'">'+esc(gapTypeLabel(r))+"</span></td>"+
           "<td>"+esc(r.name||"—")+"</td>"+
           "<td>"+esc(r.client||"—")+"</td>"+
+          "<td>"+esc(r.owner||"—")+"</td>"+
           '<td class="strong">'+esc(r.issue)+"</td>"+
           '<td class="dim">'+esc(r.detail)+"</td>"+
         "</tr>";
@@ -727,12 +865,46 @@ function renderGaps(){
     "</div>";
 
   document.getElementById("view").innerHTML=
+    '<div class="controls">'+
+      '<span class="flabel">Owner:</span>'+
+      '<div class="ms" id="msGapOwner"><button class="btn" id="msGapOwnerBtn">'+esc(oLabel)+" &#9662;</button>"+
+        '<div class="mspanel"><label><input type="checkbox" id="goAll"'+(!F.gapOwners?" checked":"")+'> <b>All owners</b></label><div class="div"></div>'+
+        owners.map(o=>'<label><input type="checkbox" class="goOne" value="'+esc(o)+'"'+(F.gapOwners&&F.gapOwners.has(o)?" checked":"")+"> "+esc(o)+' <span class="dim">('+counts[o]+")</span></label>").join("")+
+      "</div></div>"+
+      '<button class="btn" id="gapCopy">&#10697; Copy as text</button>'+
+      '<button class="btn" id="gapCsv">&#8681; Download CSV</button>'+
+      '<span class="hint">for sending to whoever owns the record &mdash; pay rates are stripped from both exports</span>'+
+    "</div>"+
     '<div class="kpis">'+
       kpi("Blocking gaps",String(blocking.length),"a number is missing or wrong until fixed")+
       kpi("Estimates in use",String(info.length),"the forecast used a coarser method than it could")+
+      kpi("Owners to chase",String(new Set(rows.map(gapOwner)).size),"people who need to fill something in")+
     "</div>"+
     tbl(blocking,"Blocking — fix these in HubSpot","revenue or margin is absent for these records")+
     tbl(info,"Estimated — worth tightening","the forecast still works, just less precisely");
+
+  const ms=document.getElementById("msGapOwner");
+  document.getElementById("msGapOwnerBtn").addEventListener("click",e=>{e.stopPropagation();ms.classList.toggle("open");});
+  ms.addEventListener("click",e=>e.stopPropagation());
+  document.getElementById("goAll").addEventListener("change",()=>{F.gapOwners=null;render();});
+  [...document.querySelectorAll(".goOne")].forEach(cb=>cb.addEventListener("change",()=>{
+    const p=[...document.querySelectorAll(".goOne")].filter(x=>x.checked).map(x=>x.value);
+    F.gapOwners=p.length?new Set(p):null;render();
+  }));
+
+  document.getElementById("gapCsv").addEventListener("click",()=>{
+    const rs=gapRows();
+    if(!rs.length){toast("Nothing to export.",true);return;}
+    download("waypost-data-gaps-"+stamp()+".csv",gapsCsv(rs),"text/csv");
+    toast("CSV downloaded — "+rs.length+" row"+(rs.length===1?"":"s")+".");
+  });
+  document.getElementById("gapCopy").addEventListener("click",async()=>{
+    const rs=gapRows();
+    if(!rs.length){toast("Nothing to copy.",true);return;}
+    const ok=await copyToClipboard(gapsText(rs));
+    toast(ok?("Copied "+rs.length+" item"+(rs.length===1?"":"s")+" — paste into an email or Teams.")
+            :"Could not reach the clipboard — use Download CSV instead.",!ok);
+  });
 }
 
 /* ===== Buttons ===== */
